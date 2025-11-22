@@ -5,3 +5,4 @@
 .vscode/ipch
 .vscode/
 sdkconfig.az-delivery-devkit-v4
+.DS_Store

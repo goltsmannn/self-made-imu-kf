@@ -21,6 +21,9 @@
 #define CTRL_REG4_M      0x23
 #define CTRL_REG5_M      0x24
 
+#define I2C_DISABLE (1 << 7)
+#define SIM         (1 << 2)
+
 // Output registers – Accel
 #define OUT_X_L_XL       0x28
 #define OUT_X_H_XL       0x29

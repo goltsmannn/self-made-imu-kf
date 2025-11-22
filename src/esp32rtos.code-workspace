@@ -17,7 +17,11 @@
 			"tof.h": "c",
 			"spi_master.h": "c",
 			"imu.h": "c",
-			"lsm9ds1_registers.h": "c"
+			"lsm9ds1_registers.h": "c",
+			"esp_log.h": "c",
+			"sstream": "c",
+			"spi.h": "c",
+			"string.h": "c"
 		}
 	}
 }
