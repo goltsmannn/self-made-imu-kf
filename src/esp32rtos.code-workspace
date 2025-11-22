@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"name": "robotics",
+			"path": ".."
+		}
+	],
+	"settings": {
+		"stm32-for-vscode.openOCDPath": false,
+		"stm32-for-vscode.armToolchainPath": false,
+		"files.associations": {
+			"*.html": "html",
+			"freertos.h": "c",
+			"task.h": "c",
+			"gpio.h": "c",
+			"freertosconfig.h": "c",
+			"tof.h": "c",
+			"spi_master.h": "c",
+			"imu.h": "c",
+			"lsm9ds1_registers.h": "c"
+		}
+	}
+}
