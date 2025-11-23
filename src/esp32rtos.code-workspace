@@ -21,7 +21,8 @@
 			"esp_log.h": "c",
 			"sstream": "c",
 			"spi.h": "c",
-			"string.h": "c"
+			"string.h": "c",
+			"cstdint": "c"
 		}
 	}
 }

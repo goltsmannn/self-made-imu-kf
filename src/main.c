@@ -15,6 +15,8 @@ spi_task_data_t mag_task_data = {
 
 void app_main() {
 	printf("Initializing IMU SPI...\r\n");
-	imu_spi_init();
-	xTaskCreate(imu_spi_transfer_task, "IMU Task", 4096, &mag_task_data, 5, NULL);
+	spi_init();
+	imu_init();
+	// xTaskCreate(read_mult_task, "Read Mult Task", 4096, NULL, 5, NULL);
+	// xTaskCreate(imu_spi_transfer_task, "IMU Task", 4096, &mag_task_data, 5, NULL);
 }

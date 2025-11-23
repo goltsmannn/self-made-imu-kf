@@ -22,7 +22,7 @@ extern  spi_device_interface_config_t accelerometer_gyroscope_spi_device_config;
 extern spi_device_handle_t magnetometer_spi_device_handle;
 extern spi_device_handle_t accelerometer_gyroscope_spi_device_handle;
 
-void imu_spi_init();
+void spi_init();
 void spi_transmit(uint8_t *tx, uint8_t *rx, spi_device_handle_t device, size_t length);
 
 

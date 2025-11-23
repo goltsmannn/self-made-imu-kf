@@ -36,7 +36,7 @@ spi_device_interface_config_t accelerometer_gyroscope_spi_device_config = {
     .dummy_bits = 0 
 };
 
-void imu_spi_init() {
+void spi_init() {
     spi_bus_initialize(HSPI_HOST, &spi_config, SPI_DMA_CH_AUTO);
     spi_bus_add_device(HSPI_HOST, &magnetometer_spi_device_config, &magnetometer_spi_device_handle);
     spi_bus_add_device(HSPI_HOST, &accelerometer_gyroscope_spi_device_config, &accelerometer_gyroscope_spi_device_handle);
@@ -54,6 +54,9 @@ void spi_transmit(uint8_t *tx, uint8_t *rx, spi_device_handle_t device, size_t l
         // Handle error
         printf("Error readin: %d\r\n", ret);
     }
+    // for (int i = 0; i < length; i++) {
+    //     printf("RX Byte %d: %d\n", i, t.rx_data[i]);
+    // }
     memcpy(rx, t.rx_data, 4); // Copy received data to caller's buffer
 }
 
