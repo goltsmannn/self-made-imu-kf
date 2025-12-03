@@ -2,7 +2,7 @@
 
 spi_device_handle_t magnetometer_spi_device_handle;
 spi_device_handle_t accelerometer_gyroscope_spi_device_handle;
-
+SemaphoreHandle_t spi_bus_semaphore;
 
 spi_bus_config_t spi_config = {
     .miso_io_num =  HSPI_MISO_PIN,
@@ -40,6 +40,7 @@ void spi_init() {
     spi_bus_initialize(HSPI_HOST, &spi_config, SPI_DMA_CH_AUTO);
     spi_bus_add_device(HSPI_HOST, &magnetometer_spi_device_config, &magnetometer_spi_device_handle);
     spi_bus_add_device(HSPI_HOST, &accelerometer_gyroscope_spi_device_config, &accelerometer_gyroscope_spi_device_handle);
+    spi_bus_semaphore = xSemaphoreCreateMutex();
 }
 
 void spi_transmit(uint8_t *tx, uint8_t *rx, spi_device_handle_t device, size_t length) {
@@ -47,22 +48,27 @@ void spi_transmit(uint8_t *tx, uint8_t *rx, spi_device_handle_t device, size_t l
     t.length = length * 8; // length in bits
 
     if (length <= 4) {
-        printf("TX/RX data mode\n");
+        // printf("TX/RX data mode\n");
         memcpy(t.tx_data, tx, length); 
         t.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
-        
+
+        xSemaphoreTake(spi_bus_semaphore, portMAX_DELAY);
         esp_err_t ret = spi_device_transmit(device, &t);
+        xSemaphoreGive(spi_bus_semaphore);
+
         if (ret != ESP_OK) {
             printf("Error readin: %d\r\n", ret);
         }
 
         memcpy(rx, t.rx_data, 4); 
     } else {
-        printf("TX/RX buffer mode\n");
+        // printf("TX/RX buffer mode\n");
         t.tx_buffer = tx;
         t.rx_buffer = rx;
-
+        xSemaphoreTake(spi_bus_semaphore, portMAX_DELAY);
         esp_err_t ret = spi_device_transmit(device, &t);
+        xSemaphoreGive(spi_bus_semaphore);
+        
         if (ret != ESP_OK) {
             printf("Error readin: %d\r\n", ret);
         }   

@@ -16,9 +16,12 @@ spi_transmit_single_command_task_s get_gyro_data = {
 };
 
 extern "C" void app_main() {
+	imu_data imu_readings = {};
 	spi_init();
 	IMU::init();
 
 	// xTaskCreate(IMU::spi_transmit_single_command_task, "IMU Task", 4096, &get_gyro_data, 5, NULL);
-	xTaskCreate(IMU::read_gyroscope_task, "Read Gyro Task", 4096, NULL, 5, NULL);
+	xTaskCreate(IMU::read_gyroscope_task, "Read Gyro Task", 4096, &imu_readings, 5, NULL);
+	xTaskCreate(IMU::read_accelerometer_task, "Read Accel Task", 4096, &imu_readings, 5, NULL);
+	xTaskCreate(IMU::print_imu_task, "Print IMU Task", 2048, &imu_readings, 5, NULL);
 }

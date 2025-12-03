@@ -1,6 +1,7 @@
 #include "SPI.h"
 #include "etl/singleton.h"
 #include <stdint.h>
+
 typedef struct {
     int16_t x;
     int16_t y;
@@ -18,7 +19,7 @@ typedef enum  {
     ACCELEROMETER,
     GYROSCOPE,
     MAGNETOMETER
-} DeviceType; //
+} DeviceType; 
 
 struct spi_transmit_single_command_task_s {
     uint8_t *command;
@@ -29,15 +30,7 @@ struct spi_transmit_single_command_task_s {
     uint8_t read_active_high;
 };
 
-// typedef struct {
-//     uint8_t *commands;
-//     uint8_t num_commands;
-//     uint8_t command_length;
-//     uint8_t dummy_length;
-//     uint8_t device_type;
-//     uint8_t read_active_high;
-//     uint8_t *responses;
-// } imu_multi_read_task_data_t;
+
 
 
 class IMU : public etl::singleton<IMU> {
@@ -47,14 +40,18 @@ public:
     static void spi_transmit_single_command_task(void *pvParameters);
 
     static void read_gyroscope_task(void *pvParameters);
-    static uint8_t* read_gyroscope();
-    
-    static uint8_t* read_accelerometer();
-    static uint8_t* read_magnetometer();
+    static void read_accelerometer_task(void *pvParameters);
+    static void read_magnetometer_task(void *pvParameters);
+
+    static void read_gyroscope(imu_data* imu_readings);
+    static void read_accelerometer(imu_data* imu_readings);
+    static void read_magnetometer(imu_data* imu_readings);
 
     static void init();
     
     static void set_sensor(DeviceType type, sensor_data sensor);
+
+    static void print_imu_task(void *pvParameters);
 
 private:
     static bool multi_read_enabled;
