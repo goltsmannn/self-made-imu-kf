@@ -10,6 +10,12 @@ const uint8_t gyro_setup_commands[6] = {
     CTRL_REG4_G, 0b00111000,  // enable axis
 };
 
+const uint8_t mag_setup_commands[4] = {
+    CTRL_REG1_M, 0b10110100, // temp comp, high performance, 80Hz
+    CTRL_REG3_M, 0b10000000 // continuous-conversion mode, i2c disable
+};
+
+
 bool IMU::multi_read_enabled = false;
 
 void IMU::package_data(uint8_t *raw_data, sensor_data* sensor) {
@@ -44,7 +50,7 @@ void IMU::spi_transmit_single_command(spi_transmit_single_command_task_s *task_d
     switch (task_data->device_type) {
         case MAGNETOMETER:
             device = magnetometer_spi_device_handle; 
-            tx[0] = (task_data->read_active_high << 7) | (task_data->command[0] & 0x3F);
+            tx[0] = (task_data->read_active_high << 7) | (task_data->multi_read_active_high << 6) | (task_data->command[0] & 0x3F);
             break;
         case ACCELEROMETER:
         case GYROSCOPE:
@@ -81,7 +87,8 @@ void IMU::init() {
         .dummy_length = 0,
         .device_type = GYROSCOPE,
         .response = rx_dummy,
-        .read_active_high = 0
+        .read_active_high = 0,
+        .multi_read_active_high = 1 // doesn't matter for gyro
     };
 
     IMU::spi_transmit_single_command(&init_task); // enable gyro
@@ -99,6 +106,14 @@ void IMU::init() {
 
     init_task.command = (uint8_t *)&accel_setup_commands[2];
     IMU::spi_transmit_single_command(&init_task); // exit powerdown
+
+    // setup mag
+    init_task.command = (uint8_t *)mag_setup_commands;
+    init_task.device_type = MAGNETOMETER;
+    IMU::spi_transmit_single_command(&init_task); // mag setup part 1
+    
+    init_task.command = (uint8_t *)&mag_setup_commands[2];
+    IMU::spi_transmit_single_command(&init_task); // mag setup part 2
 
     // general setup
     IMU::multi_read_enabled = false;
@@ -121,6 +136,32 @@ void IMU::read_accelerometer_task(void *pvParameters) {
     }
 }
 
+void IMU::read_magnetometer_task(void *pvParameters) {
+    imu_data *imu_readings = (imu_data *)pvParameters;
+    while (1) {
+        IMU::read_magnetometer(imu_readings);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+void IMU::read_magnetometer(imu_data* imu_readings) {
+    uint8_t mag_data[7];
+
+    spi_transmit_single_command_task_s get_mag_data = {
+        .command = (uint8_t[]){OUT_X_L_M},
+        .command_length = 1,
+        .dummy_length = 6,
+        .device_type = MAGNETOMETER,
+        .response = mag_data,
+        .read_active_high = 1,
+        .multi_read_active_high = 1
+    };
+
+    IMU::spi_transmit_single_command(&get_mag_data);
+
+    IMU::package_data(mag_data + 1, &imu_readings->mag);
+}
+
 void IMU::read_gyroscope(imu_data* imu_readings) {
     if (!IMU::multi_read_enabled) {
         IMU::toggle_multi_read();
@@ -134,7 +175,8 @@ void IMU::read_gyroscope(imu_data* imu_readings) {
         .dummy_length = 6,
         .device_type = GYROSCOPE,
         .response = gyro_data,
-        .read_active_high = 1
+        .read_active_high = 1,
+        .multi_read_active_high = 1 // doesn't matter for gyro
     };
     IMU::spi_transmit_single_command(&get_gyro_data);
     // printf("Gyro Data - X: %d, Y: %d, Z: %d\n", 
@@ -157,7 +199,8 @@ void IMU::read_accelerometer(imu_data* imu_readings) {
         .dummy_length = 6,
         .device_type = ACCELEROMETER,
         .response = accel_data,
-        .read_active_high = 1
+        .read_active_high = 1,
+        .multi_read_active_high = 1 // doesn't matter for accel
     };
     IMU::spi_transmit_single_command(&get_accel_data);
     IMU::package_data(accel_data, &imu_readings->accel);
@@ -177,7 +220,8 @@ void IMU::toggle_multi_read() {
         .dummy_length = 0,
         .device_type = GYROSCOPE,
         .response = rx_dummy,
-        .read_active_high = 0
+        .read_active_high = 0,
+        .multi_read_active_high = 1 // doesn't matter for gyro
     };
     IMU::spi_transmit_single_command(&multi_read);
     IMU::multi_read_enabled = !IMU::multi_read_enabled;

@@ -28,6 +28,7 @@ struct spi_transmit_single_command_task_s {
     DeviceType device_type;
     uint8_t *response;
     uint8_t read_active_high;
+    uint8_t multi_read_active_high;
 };
 
 
