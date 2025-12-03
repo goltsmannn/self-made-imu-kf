@@ -1,5 +1,6 @@
 #include "SPI.h"
-
+#include "etl/singleton.h"
+#include <stdint.h>
 typedef struct {
     int16_t x;
     int16_t y;
@@ -19,38 +20,52 @@ typedef enum  {
     MAGNETOMETER
 } DeviceType; //
 
-typedef struct {
+struct spi_transmit_single_command_task_s {
     uint8_t *command;
     uint8_t command_length;
     uint8_t dummy_length;
     DeviceType device_type;
     uint8_t *response;
     uint8_t read_active_high;
-} spi_task_data_t;
+};
 
-typedef struct {
-    uint8_t *commands;
-    uint8_t num_commands;
-    uint8_t command_length;
-    uint8_t dummy_length;
-    uint8_t device_type;
-    uint8_t read_active_high;
-    uint8_t *responses;
-} imu_multi_read_task_data_t;
+// typedef struct {
+//     uint8_t *commands;
+//     uint8_t num_commands;
+//     uint8_t command_length;
+//     uint8_t dummy_length;
+//     uint8_t device_type;
+//     uint8_t read_active_high;
+//     uint8_t *responses;
+// } imu_multi_read_task_data_t;
 
 
-void imu_spi_transfer_task(void *pvParameters);
+class IMU : public etl::singleton<IMU> {
+public:
 
-void imu_spi_transfer(spi_task_data_t *task_data);
+    static void spi_transmit_single_command(spi_transmit_single_command_task_s *task_data);
+    static void spi_transmit_single_command_task(void *pvParameters);
 
-void package_data(uint8_t *raw_data, sensor_data* sensor);
+    static void read_gyroscope_task(void *pvParameters);
+    static uint8_t* read_gyroscope();
+    
+    static uint8_t* read_accelerometer();
+    static uint8_t* read_magnetometer();
 
-void imu_send_multiple_commands(imu_multi_read_task_data_t *task_data);
+    static void init();
+    
+    static void set_sensor(DeviceType type, sensor_data sensor);
 
-void read_mult_task(void *pvParameters);
+private:
+    static bool multi_read_enabled;
+    static void package_data(uint8_t *raw_data, sensor_data* sensor);
+    static void toggle_multi_read();
+    // IMU() {}
+};
 
-void imu_init();
 
-extern const uint8_t accel_setup_commands[4];
-extern const uint8_t *gyro_setup_commands;
-extern const uint8_t *mag_setup_commands;
+
+// void imu_send_multiple_commands(imu_multi_read_task_data_t *task_data);
+
+// void read_mult_task(void *pvParameters);
+
