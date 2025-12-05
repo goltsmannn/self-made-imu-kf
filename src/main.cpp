@@ -6,7 +6,7 @@
 #include "IMU.h"
 
 extern "C" void app_main() {
-	imu_data imu_readings = {};
+	imu_data_t imu_readings = {};
 	spi_init();
 	IMU::init();
 

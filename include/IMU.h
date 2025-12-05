@@ -2,6 +2,19 @@
 #include "etl/singleton.h"
 #include <stdint.h>
 
+
+
+// Data from Table 3
+#define ACCEL_SENSITIVITY 0.061  // mg/LSB for ±2g [21]
+#define GYRO_SENSITIVITY 8.75    // mdps/LSB for ±245 dps [21]
+#define MAG_SENSITIVITY 0.14     // mgauss/LSB for ±4 gauss [21]
+
+
+#define RAW_TO_ACCEL_G(raw) ((float)(raw) * ACCEL_SENSITIVITY / 1000.0f)
+#define RAW_TO_GYRO_DPS(raw) ((float)(raw) * GYRO_SENSITIVITY / 1000.0f)
+#define RAW_TO_MAG_GAUSS(raw) ((float)(raw) * MAG_SENSITIVITY / 1000.0f)
+
+
 typedef struct {
     int16_t x;
     int16_t y;
@@ -9,11 +22,29 @@ typedef struct {
 } sensor_data;
 
 typedef struct {
+    float x;
+    float y;
+    float z;
+} converted_sensor_data;
+
+typedef struct {
     // float temperature;
     sensor_data accel;
     sensor_data gyro;
     sensor_data mag;
-} imu_data;
+} raw_imu_data;
+
+typedef struct {
+    // float temperature;
+    converted_sensor_data accel;
+    converted_sensor_data gyro;
+    converted_sensor_data mag;
+} converted_imu_data;
+
+typedef struct {
+    raw_imu_data raw_imu_readings;
+    converted_imu_data converted_imu_eadings;
+} imu_data_t;
 
 typedef enum  {
     ACCELEROMETER,
@@ -44,9 +75,9 @@ public:
     static void read_accelerometer_task(void *pvParameters);
     static void read_magnetometer_task(void *pvParameters);
 
-    static void read_gyroscope(imu_data* imu_readings);
-    static void read_accelerometer(imu_data* imu_readings);
-    static void read_magnetometer(imu_data* imu_readings);
+    static void read_gyroscope(imu_data_t* imu_readings);
+    static void read_accelerometer(imu_data_t* imu_readings);
+    static void read_magnetometer(imu_data_t* imu_readings);
 
     static void init();
     
@@ -57,6 +88,8 @@ public:
 private:
     static bool multi_read_enabled;
     static void package_data(uint8_t *raw_data, sensor_data* sensor);
+    static void convert_raw_data(raw_imu_data* imu_data, converted_imu_data* converted_data, DeviceType device);
+
     static void toggle_multi_read();
     // IMU() {}
 };

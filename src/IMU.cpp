@@ -1,17 +1,19 @@
 #include "IMU.h"
 
-const uint8_t accel_setup_commands[4] = {
+const uint8_t accel_setup_commands[6] = {
     CTRL_REG5_XL, 0b00111000, // enable axis
-    CTRL_REG6_XL, 0b00100000 // exit powerdown
+    CTRL_REG6_XL, 0b01000000, // 50HZ ODR, +-2g, 
+    CTRL_REG7_XL, 0b11000100 // ODR/9 BW, High-res mode, use LPF, bypass HPF
+    // CTRL_REG7_XL, 0b01000000 // ODR/9 BW, High-res mode, use LPF, bypass HPF
 };
 
 const uint8_t gyro_setup_commands[6] = {
-    CTRL_REG1_G, 0b00100000, // exit powerdown
+    CTRL_REG1_G, 0b01000000, // 59.5hz ODR, slow rotation, 
     CTRL_REG4_G, 0b00111000,  // enable axis
 };
 
 const uint8_t mag_setup_commands[4] = {
-    CTRL_REG1_M, 0b10110100, // temp comp, high performance, 80Hz
+    CTRL_REG1_M, 0b10011000, // 40HZ rate, temp comp, no high performance, 
     CTRL_REG3_M, 0b10000000 // continuous-conversion mode, i2c disable
 };
 
@@ -19,9 +21,26 @@ const uint8_t mag_setup_commands[4] = {
 bool IMU::multi_read_enabled = false;
 
 void IMU::package_data(uint8_t *raw_data, sensor_data* sensor) {
+    // this will automatically convert from raw data to readable format
     sensor->x = (int16_t)((raw_data[0] << 8) | raw_data[1]);
     sensor->y = (int16_t)((raw_data[2] << 8) | raw_data[3]);
     sensor->z = (int16_t)((raw_data[4] << 8) | raw_data[5]);
+}
+
+void IMU::convert_raw_data(raw_imu_data* imu_data, converted_imu_data* converted_data, DeviceType device) {
+    if (device == ACCELEROMETER) {
+        converted_data->accel.x = RAW_TO_ACCEL_G(imu_data->accel.x);
+        converted_data->accel.y = RAW_TO_ACCEL_G(imu_data->accel.y);
+        converted_data->accel.z = RAW_TO_ACCEL_G(imu_data->accel.z);
+    } else if (device == GYROSCOPE) {
+        converted_data->gyro.x = RAW_TO_GYRO_DPS(imu_data->gyro.x);
+        converted_data->gyro.y = RAW_TO_GYRO_DPS(imu_data->gyro.y);
+        converted_data->gyro.z = RAW_TO_GYRO_DPS(imu_data->gyro.z);
+    } else if (device == MAGNETOMETER) {    
+        converted_data->mag.x = RAW_TO_MAG_GAUSS(imu_data->mag.x);
+        converted_data->mag.y = RAW_TO_MAG_GAUSS(imu_data->mag.y);
+        converted_data->mag.z = RAW_TO_MAG_GAUSS(imu_data->mag.z);
+    }
 }
 
 void IMU::spi_transmit_single_command_task(void *pvParameters) {
@@ -107,6 +126,9 @@ void IMU::init() {
     init_task.command = (uint8_t *)&accel_setup_commands[2];
     IMU::spi_transmit_single_command(&init_task); // exit powerdown
 
+    init_task.command = (uint8_t *)&accel_setup_commands[4];
+    IMU::spi_transmit_single_command(&init_task); 
+
     // setup mag
     init_task.command = (uint8_t *)mag_setup_commands;
     init_task.device_type = MAGNETOMETER;
@@ -121,7 +143,7 @@ void IMU::init() {
 }
 
 void IMU::read_gyroscope_task(void *pvParameters) {
-    imu_data *imu_readings = (imu_data *)pvParameters;
+    imu_data_t *imu_readings = (imu_data_t *)pvParameters;
     while (1) {
         IMU::read_gyroscope(imu_readings);
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -129,7 +151,7 @@ void IMU::read_gyroscope_task(void *pvParameters) {
 }
 
 void IMU::read_accelerometer_task(void *pvParameters) {
-    imu_data *imu_readings = (imu_data *)pvParameters;
+    imu_data_t *imu_readings = (imu_data_t *)pvParameters;
     while (1) {
         IMU::read_accelerometer(imu_readings);
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -137,14 +159,14 @@ void IMU::read_accelerometer_task(void *pvParameters) {
 }
 
 void IMU::read_magnetometer_task(void *pvParameters) {
-    imu_data *imu_readings = (imu_data *)pvParameters;
+    imu_data_t *imu_readings = (imu_data_t *)pvParameters;
     while (1) {
         IMU::read_magnetometer(imu_readings);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
-void IMU::read_magnetometer(imu_data* imu_readings) {
+void IMU::read_magnetometer(imu_data_t* imu_readings) {
     uint8_t mag_data[7];
 
     spi_transmit_single_command_task_s get_mag_data = {
@@ -159,10 +181,11 @@ void IMU::read_magnetometer(imu_data* imu_readings) {
 
     IMU::spi_transmit_single_command(&get_mag_data);
 
-    IMU::package_data(mag_data + 1, &imu_readings->mag);
+    IMU::package_data(mag_data + 1, &imu_readings->raw_imu_readings.mag);
+    IMU::convert_raw_data(&imu_readings->raw_imu_readings, &imu_readings->converted_imu_eadings, MAGNETOMETER);
 }
 
-void IMU::read_gyroscope(imu_data* imu_readings) {
+void IMU::read_gyroscope(imu_data_t* imu_readings) {
     if (!IMU::multi_read_enabled) {
         IMU::toggle_multi_read();
         IMU::multi_read_enabled = true;
@@ -179,14 +202,12 @@ void IMU::read_gyroscope(imu_data* imu_readings) {
         .multi_read_active_high = 1 // doesn't matter for gyro
     };
     IMU::spi_transmit_single_command(&get_gyro_data);
-    // printf("Gyro Data - X: %d, Y: %d, Z: %d\n", 
-        // gyro_data[0] << 7 | gyro_data[1], gyro_data[2] << 7 | gyro_data[3], gyro_data[4] << 7 | gyro_data[5]);
-    // printf("zero byte: %d\n", gyro_data[0]);
 
-    IMU::package_data(gyro_data + 1, &imu_readings->gyro);
+    IMU::package_data(gyro_data + 1, &imu_readings->raw_imu_readings.gyro);
+    IMU::convert_raw_data(&imu_readings->raw_imu_readings, &imu_readings->converted_imu_eadings, GYROSCOPE);
 }
 
-void IMU::read_accelerometer(imu_data* imu_readings) {
+void IMU::read_accelerometer(imu_data_t* imu_readings) {
     if (!IMU::multi_read_enabled) {
         IMU::toggle_multi_read();
         IMU::multi_read_enabled = true;
@@ -203,7 +224,8 @@ void IMU::read_accelerometer(imu_data* imu_readings) {
         .multi_read_active_high = 1 // doesn't matter for accel
     };
     IMU::spi_transmit_single_command(&get_accel_data);
-    IMU::package_data(accel_data, &imu_readings->accel);
+    IMU::package_data(accel_data, &imu_readings->raw_imu_readings.accel);
+    IMU::convert_raw_data(&imu_readings->raw_imu_readings, &imu_readings->converted_imu_eadings, ACCELEROMETER);
 }
 
 void IMU::toggle_multi_read() {
@@ -233,12 +255,12 @@ void IMU::toggle_multi_read() {
 }
 
 void IMU::print_imu_task(void *pvParameters) {
-    imu_data *imu_readings = (imu_data *)pvParameters;
+    imu_data_t *imu_readings = (imu_data_t *)pvParameters;
     while (1) {
-        printf("Accel: X=%d Y=%d Z=%d | Gyro: X=%d Y=%d Z=%d | Mag: X=%d Y=%d Z=%d\n",
-            imu_readings->accel.x, imu_readings->accel.y, imu_readings->accel.z,
-            imu_readings->gyro.x, imu_readings->gyro.y, imu_readings->gyro.z,
-            imu_readings->mag.x, imu_readings->mag.y, imu_readings->mag.z);
+        printf("Accel: X=%f Y=%f Z=%f | Gyro: X=%f Y=%f Z=%f | Mag: X=%f Y=%f Z=%f\n",
+            imu_readings->converted_imu_eadings.accel.x, imu_readings->converted_imu_eadings.accel.y, imu_readings->converted_imu_eadings.accel.z,
+            imu_readings->converted_imu_eadings.gyro.x, imu_readings->converted_imu_eadings.gyro.y, imu_readings->converted_imu_eadings.gyro.z,
+            imu_readings->converted_imu_eadings.mag.x, imu_readings->converted_imu_eadings.mag.y, imu_readings->converted_imu_eadings.mag.z);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
