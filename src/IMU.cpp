@@ -19,29 +19,60 @@ const uint8_t mag_setup_commands[4] = {
 
 
 bool IMU::multi_read_enabled = false;
+imu_data_t IMU::shared_imu_data = {};
 
-void IMU::package_data(uint8_t *raw_data, sensor_data* sensor) {
-    // this will automatically convert from raw data to readable format
-    sensor->x = (int16_t)((raw_data[0] << 8) | raw_data[1]);
-    sensor->y = (int16_t)((raw_data[2] << 8) | raw_data[3]);
-    sensor->z = (int16_t)((raw_data[4] << 8) | raw_data[5]);
+QueueHandle_t sensor_data_queue = NULL;
+EventGroupHandle_t print_ready_event_group = NULL;
+SemaphoreHandle_t shared_imu_data_mutex = NULL;
+
+void IMU::package_data() {
+    SensorQueueEntity queue_entity;
+    sensor_data raw_sensor_data;
+    converted_sensor_data converted_sensor_data;
+
+    int imu_struct_offset = 0;
+    for(;;) {
+        if (xQueueReceive(sensor_data_queue, &queue_entity, portMAX_DELAY)) {
+            // printf("Received data from queue for device type %d\n", queue_entity.device_type);
+            memset(&raw_sensor_data, 0, sizeof(sensor_data));
+            memset(&converted_sensor_data, 0, sizeof(sensor_data));
+            raw_sensor_data.x = (int16_t)((queue_entity.data[1] << 8) | queue_entity.data[0]);
+            raw_sensor_data.y = (int16_t)((queue_entity.data[3] << 8) | queue_entity.data[2]);
+            raw_sensor_data.z = (int16_t)((queue_entity.data[5] << 8) | queue_entity.data[4]);
+
+            switch (queue_entity.device_type) {
+                case ACCELEROMETER:
+                    // printf("Accel Raw: X=%d, Y=%d, Z=%d\r\n", raw_sensor_data.x, raw_sensor_data.y, raw_sensor_data.z);
+                    converted_sensor_data.x = RAW_TO_ACCEL_G(raw_sensor_data.x);
+                    converted_sensor_data.y = RAW_TO_ACCEL_G(raw_sensor_data.y);
+                    converted_sensor_data.z = RAW_TO_ACCEL_G(raw_sensor_data.z);
+                    break;
+                case GYROSCOPE:
+                    // printf("Gyro Raw: X=%d, Y=%d, Z=%d\r\n", raw_sensor_data.x, raw_sensor_data.y, raw_sensor_data.z);
+                    converted_sensor_data.x = RAW_TO_GYRO_DPS(raw_sensor_data.x);
+                    converted_sensor_data.y = RAW_TO_GYRO_DPS(raw_sensor_data.y);
+                    converted_sensor_data.z = RAW_TO_GYRO_DPS(raw_sensor_data.z);
+                    break;
+                case MAGNETOMETER:  
+                    // printf("Mag Raw: X=%d, Y=%d, Z=%d\r\n", raw_sensor_data.x, raw_sensor_data.y, raw_sensor_data.z);     
+                    converted_sensor_data.x = RAW_TO_MAG_GAUSS(raw_sensor_data.x);
+                    converted_sensor_data.y = RAW_TO_MAG_GAUSS(raw_sensor_data.y);
+                    converted_sensor_data.z = RAW_TO_MAG_GAUSS(raw_sensor_data.z);
+                    break;  
+            }
+
+
+            xSemaphoreTake(shared_imu_data_mutex, portMAX_DELAY);
+            memcpy(((uint8_t *)&(IMU::shared_imu_data.raw_imu_readings)) + queue_entity.device_type * sizeof(sensor_data), &raw_sensor_data, sizeof(sensor_data));
+            memcpy(((uint8_t *)&(IMU::shared_imu_data.converted_imu_readings)) + queue_entity.device_type * sizeof(converted_sensor_data), &converted_sensor_data, sizeof(converted_sensor_data));
+            xSemaphoreGive(shared_imu_data_mutex);
+            xEventGroupSetBits(print_ready_event_group, (1 << queue_entity.device_type));
+        }
+        
+    }    
 }
 
-void IMU::convert_raw_data(raw_imu_data* imu_data, converted_imu_data* converted_data, DeviceType device) {
-    if (device == ACCELEROMETER) {
-        converted_data->accel.x = RAW_TO_ACCEL_G(imu_data->accel.x);
-        converted_data->accel.y = RAW_TO_ACCEL_G(imu_data->accel.y);
-        converted_data->accel.z = RAW_TO_ACCEL_G(imu_data->accel.z);
-    } else if (device == GYROSCOPE) {
-        converted_data->gyro.x = RAW_TO_GYRO_DPS(imu_data->gyro.x);
-        converted_data->gyro.y = RAW_TO_GYRO_DPS(imu_data->gyro.y);
-        converted_data->gyro.z = RAW_TO_GYRO_DPS(imu_data->gyro.z);
-    } else if (device == MAGNETOMETER) {    
-        converted_data->mag.x = RAW_TO_MAG_GAUSS(imu_data->mag.x);
-        converted_data->mag.y = RAW_TO_MAG_GAUSS(imu_data->mag.y);
-        converted_data->mag.z = RAW_TO_MAG_GAUSS(imu_data->mag.z);
-    }
-}
+
 
 void IMU::spi_transmit_single_command_task(void *pvParameters) {
     uint8_t rx[4];
@@ -97,6 +128,10 @@ void IMU::spi_transmit_single_command(spi_transmit_single_command_task_s *task_d
 }
 
 void IMU::init() {
+    sensor_data_queue = xQueueCreate(10, sizeof(SensorQueueEntity));
+    print_ready_event_group = xEventGroupCreate();
+    shared_imu_data_mutex = xSemaphoreCreateMutex();
+
     uint8_t rx_dummy[4];
 
     // setup gyro
@@ -143,30 +178,27 @@ void IMU::init() {
 }
 
 void IMU::read_gyroscope_task(void *pvParameters) {
-    imu_data_t *imu_readings = (imu_data_t *)pvParameters;
     while (1) {
-        IMU::read_gyroscope(imu_readings);
+        IMU::read_gyroscope();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
 void IMU::read_accelerometer_task(void *pvParameters) {
-    imu_data_t *imu_readings = (imu_data_t *)pvParameters;
     while (1) {
-        IMU::read_accelerometer(imu_readings);
+        IMU::read_accelerometer();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
 void IMU::read_magnetometer_task(void *pvParameters) {
-    imu_data_t *imu_readings = (imu_data_t *)pvParameters;
     while (1) {
-        IMU::read_magnetometer(imu_readings);
+        IMU::read_magnetometer();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
-void IMU::read_magnetometer(imu_data_t* imu_readings) {
+void IMU::read_magnetometer() {
     uint8_t mag_data[7];
 
     spi_transmit_single_command_task_s get_mag_data = {
@@ -181,14 +213,17 @@ void IMU::read_magnetometer(imu_data_t* imu_readings) {
 
     IMU::spi_transmit_single_command(&get_mag_data);
 
-    IMU::package_data(mag_data + 1, &imu_readings->raw_imu_readings.mag);
-    IMU::convert_raw_data(&imu_readings->raw_imu_readings, &imu_readings->converted_imu_eadings, MAGNETOMETER);
+    SensorQueueEntity queue_entity = {
+        .device_type = MAGNETOMETER,
+    };
+    memcpy(queue_entity.data, mag_data + 1, 6);
+    // printf("Sending mag");
+    xQueueSend(sensor_data_queue, &queue_entity, 0);
 }
 
-void IMU::read_gyroscope(imu_data_t* imu_readings) {
+void IMU::read_gyroscope() {
     if (!IMU::multi_read_enabled) {
         IMU::toggle_multi_read();
-        IMU::multi_read_enabled = true;
     }
     uint8_t gyro_data[7];
 
@@ -203,14 +238,18 @@ void IMU::read_gyroscope(imu_data_t* imu_readings) {
     };
     IMU::spi_transmit_single_command(&get_gyro_data);
 
-    IMU::package_data(gyro_data + 1, &imu_readings->raw_imu_readings.gyro);
-    IMU::convert_raw_data(&imu_readings->raw_imu_readings, &imu_readings->converted_imu_eadings, GYROSCOPE);
+    SensorQueueEntity queue_entity = {
+        .device_type = GYROSCOPE,
+    };
+    memcpy(queue_entity.data, gyro_data + 1, 6);
+
+    // printf("Sending gyro");
+    xQueueSend(sensor_data_queue, &queue_entity, 0);
 }
 
-void IMU::read_accelerometer(imu_data_t* imu_readings) {
+void IMU::read_accelerometer() {
     if (!IMU::multi_read_enabled) {
         IMU::toggle_multi_read();
-        IMU::multi_read_enabled = true;
     }
 
     uint8_t accel_data[7];
@@ -224,8 +263,12 @@ void IMU::read_accelerometer(imu_data_t* imu_readings) {
         .multi_read_active_high = 1 // doesn't matter for accel
     };
     IMU::spi_transmit_single_command(&get_accel_data);
-    IMU::package_data(accel_data, &imu_readings->raw_imu_readings.accel);
-    IMU::convert_raw_data(&imu_readings->raw_imu_readings, &imu_readings->converted_imu_eadings, ACCELEROMETER);
+    SensorQueueEntity queue_entity = {
+        .device_type = ACCELEROMETER,
+    };
+    memcpy(queue_entity.data, accel_data + 1, 6);
+    // printf("Sending accel");
+    xQueueSend(sensor_data_queue, &queue_entity, 0);
 }
 
 void IMU::toggle_multi_read() {
@@ -254,15 +297,29 @@ void IMU::toggle_multi_read() {
     }
 }
 
-void IMU::print_imu_task(void *pvParameters) {
-    imu_data_t *imu_readings = (imu_data_t *)pvParameters;
+void IMU::print_imu() {
+    
+
     while (1) {
+        xEventGroupWaitBits(print_ready_event_group,
+            ACCEL_BIT | GYRO_BIT | MAG_BIT,
+            pdTRUE, pdTRUE, portMAX_DELAY);
+        xSemaphoreTake(shared_imu_data_mutex, portMAX_DELAY);
         printf("Accel: X=%f Y=%f Z=%f | Gyro: X=%f Y=%f Z=%f | Mag: X=%f Y=%f Z=%f\n",
-            imu_readings->converted_imu_eadings.accel.x, imu_readings->converted_imu_eadings.accel.y, imu_readings->converted_imu_eadings.accel.z,
-            imu_readings->converted_imu_eadings.gyro.x, imu_readings->converted_imu_eadings.gyro.y, imu_readings->converted_imu_eadings.gyro.z,
-            imu_readings->converted_imu_eadings.mag.x, imu_readings->converted_imu_eadings.mag.y, imu_readings->converted_imu_eadings.mag.z);
+            IMU::shared_imu_data.converted_imu_readings.accel.x, IMU::shared_imu_data.converted_imu_readings.accel.y, IMU::shared_imu_data.converted_imu_readings.accel.z,
+            IMU::shared_imu_data.converted_imu_readings.gyro.x, IMU::shared_imu_data.converted_imu_readings.gyro.y, IMU::shared_imu_data.converted_imu_readings.gyro.z,
+            IMU::shared_imu_data.converted_imu_readings.mag.x, IMU::shared_imu_data.converted_imu_readings.mag.y, IMU::shared_imu_data.converted_imu_readings.mag.z);
+        xSemaphoreGive(shared_imu_data_mutex);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+}
+
+void IMU::package_data_task(void *pvParameters) {
+    IMU::instance().package_data();
+}
+
+void IMU::print_imu_task(void *pvParameters) {
+    IMU::instance().print_imu();
 }
 
 // In app_main(), after initializing and starting other tasks:

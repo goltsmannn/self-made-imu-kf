@@ -14,7 +14,9 @@
 #define RAW_TO_GYRO_DPS(raw) ((float)(raw) * GYRO_SENSITIVITY / 1000.0f)
 #define RAW_TO_MAG_GAUSS(raw) ((float)(raw) * MAG_SENSITIVITY / 1000.0f)
 
-
+#define ACCEL_BIT (1 << 0)
+#define GYRO_BIT  (1 << 1)
+#define MAG_BIT   (1 << 2)
 typedef struct {
     int16_t x;
     int16_t y;
@@ -43,11 +45,11 @@ typedef struct {
 
 typedef struct {
     raw_imu_data raw_imu_readings;
-    converted_imu_data converted_imu_eadings;
+    converted_imu_data converted_imu_readings;
 } imu_data_t;
 
 typedef enum  {
-    ACCELEROMETER,
+    ACCELEROMETER = 0,
     GYROSCOPE,
     MAGNETOMETER
 } DeviceType; 
@@ -62,33 +64,40 @@ struct spi_transmit_single_command_task_s {
     uint8_t multi_read_active_high;
 };
 
+struct SensorQueueEntity {
+    DeviceType device_type;
+    uint8_t data[6];
+};
 
-
+extern QueueHandle_t sensor_data_queue;
+extern EventGroupHandle_t print_ready_event_group;
+extern SemaphoreHandle_t shared_imu_data_mutex;
 
 class IMU : public etl::singleton<IMU> {
 public:
-
+    static imu_data_t shared_imu_data;
     static void spi_transmit_single_command(spi_transmit_single_command_task_s *task_data);
     static void spi_transmit_single_command_task(void *pvParameters);
 
     static void read_gyroscope_task(void *pvParameters);
     static void read_accelerometer_task(void *pvParameters);
     static void read_magnetometer_task(void *pvParameters);
+    static void package_data_task(void *pvParameters);
+    static void print_imu_task(void *pvParameters);
 
-    static void read_gyroscope(imu_data_t* imu_readings);
-    static void read_accelerometer(imu_data_t* imu_readings);
-    static void read_magnetometer(imu_data_t* imu_readings);
+    static void read_gyroscope();
+    static void read_accelerometer();
+    static void read_magnetometer();
 
     static void init();
     
     static void set_sensor(DeviceType type, sensor_data sensor);
 
-    static void print_imu_task(void *pvParameters);
+    static void print_imu();
 
 private:
     static bool multi_read_enabled;
-    static void package_data(uint8_t *raw_data, sensor_data* sensor);
-    static void convert_raw_data(raw_imu_data* imu_data, converted_imu_data* converted_data, DeviceType device);
+    static void package_data();
 
     static void toggle_multi_read();
     // IMU() {}
