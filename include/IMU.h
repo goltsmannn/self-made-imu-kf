@@ -9,6 +9,7 @@
 #define GYRO_SENSITIVITY 8.75    // mdps/LSB for ±245 dps [21]
 #define MAG_SENSITIVITY 0.14     // mgauss/LSB for ±4 gauss [21]
 
+#define GYRO_CALIBRATION_SAMPLES 100
 
 #define RAW_TO_ACCEL_G(raw) ((float)(raw) * ACCEL_SENSITIVITY / 1000.0f)
 #define RAW_TO_GYRO_DPS(raw) ((float)(raw) * GYRO_SENSITIVITY / 1000.0f)
@@ -17,6 +18,10 @@
 #define ACCEL_BIT (1 << 0)
 #define GYRO_BIT  (1 << 1)
 #define MAG_BIT   (1 << 2)
+
+#define ACCEL_GYRO_INTERRUPT_PIN (GPIO_NUM_16)
+#define MAG_INTERRUPT_PIN (GPIO_NUM_17)
+
 typedef struct {
     int16_t x;
     int16_t y;
@@ -69,21 +74,32 @@ struct SensorQueueEntity {
     uint8_t data[6];
 };
 
-extern QueueHandle_t sensor_data_queue;
-extern EventGroupHandle_t print_ready_event_group;
-extern SemaphoreHandle_t shared_imu_data_mutex;
+
 
 class IMU : public etl::singleton<IMU> {
 public:
     static imu_data_t shared_imu_data;
+    static converted_sensor_data calibrated_gyro_offset;
+
+    static QueueHandle_t sensor_data_queue;
+    static EventGroupHandle_t print_ready_event_group;
+    static SemaphoreHandle_t shared_imu_data_mutex;
+    static SemaphoreHandle_t accelGyroDRDYSemaphore;
+    static SemaphoreHandle_t magDRDYSemaphore;
+    static bool multi_read_enabled;
+
+
     static void spi_transmit_single_command(spi_transmit_single_command_task_s *task_data);
     static void spi_transmit_single_command_task(void *pvParameters);
+
 
     static void read_gyroscope_task(void *pvParameters);
     static void read_accelerometer_task(void *pvParameters);
     static void read_magnetometer_task(void *pvParameters);
+
     static void package_data_task(void *pvParameters);
     static void print_imu_task(void *pvParameters);
+
 
     static void read_gyroscope();
     static void read_accelerometer();
@@ -96,10 +112,10 @@ public:
     static void print_imu();
 
 private:
-    static bool multi_read_enabled;
     static void package_data();
-
+    static void calibrate_gyroscope();
     static void toggle_multi_read();
+    static void configure_interrupts();
     // IMU() {}
 };
 

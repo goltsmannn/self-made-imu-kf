@@ -52,3 +52,7 @@
 // Optional: status registers
 #define STATUS_REG_XG    (uint8_t) 0x17
 #define STATUS_REG_M     (uint8_t) 0x27
+
+// interrupts
+#define INT1_CTRL        (uint8_t) 0x0C
+#define INT2_CTRL        (uint8_t) 0x0D

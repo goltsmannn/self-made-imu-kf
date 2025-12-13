@@ -1,15 +1,28 @@
 #include "IMU.h"
 
-const uint8_t accel_setup_commands[6] = {
+// Static member definitions and initializations
+imu_data_t IMU::shared_imu_data = {};
+converted_sensor_data IMU::calibrated_gyro_offset = {};
+QueueHandle_t IMU::sensor_data_queue = xQueueCreate(10, sizeof(SensorQueueEntity));
+EventGroupHandle_t IMU::print_ready_event_group = xEventGroupCreate();
+SemaphoreHandle_t IMU::shared_imu_data_mutex = xSemaphoreCreateMutex();
+SemaphoreHandle_t IMU::accelGyroDRDYSemaphore = xSemaphoreCreateBinary();
+SemaphoreHandle_t IMU::magDRDYSemaphore = xSemaphoreCreateBinary();
+bool IMU::multi_read_enabled = false;
+
+const uint8_t accel_setup_commands[8] = {
     CTRL_REG5_XL, 0b00111000, // enable axis
     CTRL_REG6_XL, 0b01000000, // 50HZ ODR, +-2g, 
-    CTRL_REG7_XL, 0b11000100 // ODR/9 BW, High-res mode, use LPF, bypass HPF
+    CTRL_REG7_XL, 0b11000100, // ODR/9 BW, High-res mode, use LPF, bypass HPF
+    CTRL_REG9, 0b00001000 // enable active high data ready signal for both accel and gyro
+
     // CTRL_REG7_XL, 0b01000000 // ODR/9 BW, High-res mode, use LPF, bypass HPF
 };
 
 const uint8_t gyro_setup_commands[6] = {
     CTRL_REG1_G, 0b01000000, // 59.5hz ODR, slow rotation, 
     CTRL_REG4_G, 0b00111000,  // enable axis
+    CTRL_REG1_G, 0b01100000 // fast read for calibration (119hz)
 };
 
 const uint8_t mag_setup_commands[4] = {
@@ -17,20 +30,23 @@ const uint8_t mag_setup_commands[4] = {
     CTRL_REG3_M, 0b10000000 // continuous-conversion mode, i2c disable
 };
 
+const uint8_t interrupt_setup_commands[2] = {
+    INT1_CTRL, 0b00000011, // enable data ready interrupts for accel, gyro, mag on INT1
+    // drdy is configured by default
+};
 
-bool IMU::multi_read_enabled = false;
-imu_data_t IMU::shared_imu_data = {};
 
-QueueHandle_t sensor_data_queue = NULL;
-EventGroupHandle_t print_ready_event_group = NULL;
-SemaphoreHandle_t shared_imu_data_mutex = NULL;
+
+
+
+
+
 
 void IMU::package_data() {
     SensorQueueEntity queue_entity;
     sensor_data raw_sensor_data;
     converted_sensor_data converted_sensor_data;
 
-    int imu_struct_offset = 0;
     for(;;) {
         if (xQueueReceive(sensor_data_queue, &queue_entity, portMAX_DELAY)) {
             // printf("Received data from queue for device type %d\n", queue_entity.device_type);
@@ -49,9 +65,9 @@ void IMU::package_data() {
                     break;
                 case GYROSCOPE:
                     // printf("Gyro Raw: X=%d, Y=%d, Z=%d\r\n", raw_sensor_data.x, raw_sensor_data.y, raw_sensor_data.z);
-                    converted_sensor_data.x = RAW_TO_GYRO_DPS(raw_sensor_data.x);
-                    converted_sensor_data.y = RAW_TO_GYRO_DPS(raw_sensor_data.y);
-                    converted_sensor_data.z = RAW_TO_GYRO_DPS(raw_sensor_data.z);
+                    converted_sensor_data.x = RAW_TO_GYRO_DPS(raw_sensor_data.x) - IMU::calibrated_gyro_offset.x;
+                    converted_sensor_data.y = RAW_TO_GYRO_DPS(raw_sensor_data.y) - IMU::calibrated_gyro_offset.y;
+                    converted_sensor_data.z = RAW_TO_GYRO_DPS(raw_sensor_data.z) - IMU::calibrated_gyro_offset.z;
                     break;
                 case MAGNETOMETER:  
                     // printf("Mag Raw: X=%d, Y=%d, Z=%d\r\n", raw_sensor_data.x, raw_sensor_data.y, raw_sensor_data.z);     
@@ -70,24 +86,6 @@ void IMU::package_data() {
         }
         
     }    
-}
-
-
-
-void IMU::spi_transmit_single_command_task(void *pvParameters) {
-    uint8_t rx[4];
-    spi_transmit_single_command_task_s *task_data = (spi_transmit_single_command_task_s *)pvParameters;
-    task_data->response = rx;
-
-
-    while (1) {
-        IMU::spi_transmit_single_command(task_data);
-        vTaskDelay(pdMS_TO_TICKS(80)); // Delay for 80 milliseconds
-        printf("IMU SPI transfer task running...\n");
-        for (int i = 0; i < task_data->command_length + task_data->dummy_length; i++) {
-            printf("Byte %d: %d\n", i, task_data->response[i]);
-        }
-    }
 }
 
 
@@ -127,16 +125,13 @@ void IMU::spi_transmit_single_command(spi_transmit_single_command_task_s *task_d
     spi_transmit(tx, task_data->response, device, task_data->command_length + task_data->dummy_length);
 }
 
-void IMU::init() {
-    sensor_data_queue = xQueueCreate(10, sizeof(SensorQueueEntity));
-    print_ready_event_group = xEventGroupCreate();
-    shared_imu_data_mutex = xSemaphoreCreateMutex();
-
+void IMU::init() {    
+    printf("Calibrated gyro offsets: X=%f, Y=%f, Z=%f\n", IMU::calibrated_gyro_offset.x, IMU::calibrated_gyro_offset.y, IMU::calibrated_gyro_offset.z);
     uint8_t rx_dummy[4];
 
     // setup gyro
     spi_transmit_single_command_task_s init_task = {
-        .command = (uint8_t *)gyro_setup_commands,
+        .command = (uint8_t *)&gyro_setup_commands[4],
         .command_length = 2,
         .dummy_length = 0,
         .device_type = GYROSCOPE,
@@ -145,11 +140,13 @@ void IMU::init() {
         .multi_read_active_high = 1 // doesn't matter for gyro
     };
 
-    IMU::spi_transmit_single_command(&init_task); // enable gyro
+    IMU::spi_transmit_single_command(&init_task); // put gyro in fast mode for calibration
 
     init_task.command = (uint8_t *)&gyro_setup_commands[2];
     IMU::spi_transmit_single_command(&init_task); // enable axes
 
+    init_task.command = (uint8_t *)gyro_setup_commands;
+    IMU::spi_transmit_single_command(&init_task); // normal mode, 59.5hz
 
 
     // setup accel
@@ -159,10 +156,13 @@ void IMU::init() {
     IMU::spi_transmit_single_command(&init_task); // enable axes
 
     init_task.command = (uint8_t *)&accel_setup_commands[2];
-    IMU::spi_transmit_single_command(&init_task); // exit powerdown
+    IMU::spi_transmit_single_command(&init_task); // set reading frequency 
 
     init_task.command = (uint8_t *)&accel_setup_commands[4];
-    IMU::spi_transmit_single_command(&init_task); 
+    IMU::spi_transmit_single_command(&init_task); // set filters
+
+    init_task.command = (uint8_t *)&accel_setup_commands[6];
+    IMU::spi_transmit_single_command(&init_task); // set data ready interrupt
 
     // setup mag
     init_task.command = (uint8_t *)mag_setup_commands;
@@ -175,26 +175,47 @@ void IMU::init() {
     // general setup
     IMU::multi_read_enabled = false;
     IMU::toggle_multi_read();
+    
+    
+    IMU::configure_interrupts();
+    init_task.command = (uint8_t *)interrupt_setup_commands;
+    init_task.device_type = GYROSCOPE; // doesn't matter if gyro or accel
+    IMU::spi_transmit_single_command(&init_task); // enable data ready interrupts
+
+    //! Do this only after enabling interrupts
+    IMU::calibrate_gyroscope();
+    printf("IMU initialization complete.\n");
+
+    // this is done to reset status bits and clear any pending interrupts
+    IMU::read_accelerometer();
+    IMU::read_gyroscope();
+    IMU::read_magnetometer();
 }
 
 void IMU::read_gyroscope_task(void *pvParameters) {
     while (1) {
-        IMU::read_gyroscope();
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (xSemaphoreTake(accelGyroDRDYSemaphore, portMAX_DELAY) == pdTRUE) {
+            // printf("Accel/Gyro interrupt triggered\n");
+            IMU::read_gyroscope();
+            IMU::read_accelerometer();
+        }
     }
 }
-
-void IMU::read_accelerometer_task(void *pvParameters) {
-    while (1) {
-        IMU::read_accelerometer();
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
+// TODO: THIS IS A TEMPORARY FIX AS I ONLY HAVE ONE WIRE FOR TWO INTERRUPTS (OUT OF JUMPERS)
+// void IMU::read_accelerometer_task(void *pvParameters) {
+//     while (1) {
+//         if (xSemaphoreTake(accelGyroDRDYSemaphore, portMAX_DELAY) == pdTRUE) {
+//             IMU::read_accelerometer();
+//         }
+//     }
+// }
 
 void IMU::read_magnetometer_task(void *pvParameters) {
     while (1) {
-        IMU::read_magnetometer();
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (xSemaphoreTake(magDRDYSemaphore, portMAX_DELAY) == pdTRUE) {
+            // printf("Magnetometer interrupt triggered\n");
+            IMU::read_magnetometer();
+        }
     }
 }
 
@@ -215,6 +236,7 @@ void IMU::read_magnetometer() {
 
     SensorQueueEntity queue_entity = {
         .device_type = MAGNETOMETER,
+        .data = {0}
     };
     memcpy(queue_entity.data, mag_data + 1, 6);
     // printf("Sending mag");
@@ -240,6 +262,7 @@ void IMU::read_gyroscope() {
 
     SensorQueueEntity queue_entity = {
         .device_type = GYROSCOPE,
+        .data = {0}
     };
     memcpy(queue_entity.data, gyro_data + 1, 6);
 
@@ -265,6 +288,7 @@ void IMU::read_accelerometer() {
     IMU::spi_transmit_single_command(&get_accel_data);
     SensorQueueEntity queue_entity = {
         .device_type = ACCELEROMETER,
+        .data = {0}
     };
     memcpy(queue_entity.data, accel_data + 1, 6);
     // printf("Sending accel");
@@ -273,7 +297,7 @@ void IMU::read_accelerometer() {
 
 void IMU::toggle_multi_read() {
     uint8_t tx[] = { CTRL_REG8, 0x00 }; // enable multiread
-    if (!multi_read_enabled) {
+    if (!IMU::multi_read_enabled) {
         tx[1] =0b00000100;
     } 
 
@@ -310,8 +334,70 @@ void IMU::print_imu() {
             IMU::shared_imu_data.converted_imu_readings.gyro.x, IMU::shared_imu_data.converted_imu_readings.gyro.y, IMU::shared_imu_data.converted_imu_readings.gyro.z,
             IMU::shared_imu_data.converted_imu_readings.mag.x, IMU::shared_imu_data.converted_imu_readings.mag.y, IMU::shared_imu_data.converted_imu_readings.mag.z);
         xSemaphoreGive(shared_imu_data_mutex);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
+}
+
+void IMU::calibrate_gyroscope() {
+    constexpr int num_samples = 100;
+    float gyro_x_offset = 0.0f;
+    float gyro_y_offset = 0.0f;
+    float gyro_z_offset = 0.0f;
+
+    for (int i = 0; i < num_samples; i++) {
+        IMU::read_gyroscope(); // bypass interrupts for calibration
+        vTaskDelay(pdMS_TO_TICKS(10)); // Small delay to allow data to be read
+        xSemaphoreTake(shared_imu_data_mutex, portMAX_DELAY);
+        gyro_x_offset += IMU::shared_imu_data.converted_imu_readings.gyro.x;
+        gyro_y_offset += IMU::shared_imu_data.converted_imu_readings.gyro.y;
+        gyro_z_offset += IMU::shared_imu_data.converted_imu_readings.gyro.z;
+        xSemaphoreGive(shared_imu_data_mutex);
+        vTaskDelay(pdMS_TO_TICKS(10)); // Small delay between samples
+    }
+
+    gyro_x_offset /= num_samples;
+    gyro_y_offset /= num_samples;
+    gyro_z_offset /= num_samples;
+
+    IMU::calibrated_gyro_offset.x = gyro_x_offset;
+    IMU::calibrated_gyro_offset.y = gyro_y_offset;
+    IMU::calibrated_gyro_offset.z = gyro_z_offset;
+
+    // Store offsets for later use (not implemented in this snippet)
+    printf("Gyroscope calibrated. Offsets - X: %f, Y: %f, Z: %f\n", gyro_x_offset, gyro_y_offset, gyro_z_offset);
+}
+
+void IMU::configure_interrupts() {
+    gpio_install_isr_service(0);
+
+    gpio_config_t io_conf = {};
+    io_conf.pin_bit_mask = (1 << ACCEL_GYRO_INTERRUPT_PIN);
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
+    gpio_config(&io_conf);
+
+    io_conf.pin_bit_mask = (1 << MAG_INTERRUPT_PIN);
+    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
+    gpio_config(&io_conf);
+
+    gpio_isr_handler_add(ACCEL_GYRO_INTERRUPT_PIN, [](void*){
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xSemaphoreGiveFromISR(IMU::accelGyroDRDYSemaphore, &xHigherPriorityTaskWoken);
+        if (xHigherPriorityTaskWoken) {
+            portYIELD_FROM_ISR();
+        }
+    }, NULL);
+
+    gpio_isr_handler_add(MAG_INTERRUPT_PIN, [](void*){
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xSemaphoreGiveFromISR(IMU::magDRDYSemaphore, &xHigherPriorityTaskWoken);
+        if (xHigherPriorityTaskWoken) {
+            portYIELD_FROM_ISR();
+        }
+    }, NULL);
 }
 
 void IMU::package_data_task(void *pvParameters) {
@@ -322,4 +408,25 @@ void IMU::print_imu_task(void *pvParameters) {
     IMU::instance().print_imu();
 }
 
-// In app_main(), after initializing and starting other tasks:
+
+
+
+
+
+
+
+void IMU::spi_transmit_single_command_task(void *pvParameters) {
+    uint8_t rx[4];
+    spi_transmit_single_command_task_s *task_data = (spi_transmit_single_command_task_s *)pvParameters;
+    task_data->response = rx;
+
+
+    while (1) {
+        IMU::spi_transmit_single_command(task_data);
+        vTaskDelay(pdMS_TO_TICKS(80)); // Delay for 80 milliseconds
+        printf("IMU SPI transfer task running...\n");
+        for (int i = 0; i < task_data->command_length + task_data->dummy_length; i++) {
+            printf("Byte %d: %d\n", i, task_data->response[i]);
+        }
+    }
+}
