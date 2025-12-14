@@ -1,3 +1,6 @@
+#ifndef IMU_H
+#define IMU_H
+
 #include "SPI.h"
 #include "etl/singleton.h"
 #include <stdint.h>
@@ -131,3 +134,4 @@ private:
 
 // void read_mult_task(void *pvParameters);
 
+#endif // IMU_H

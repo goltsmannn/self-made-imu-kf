@@ -1,3 +1,7 @@
+#ifndef TOF_H
+#define TOF_H
+//! DEPRECATED - for reference only
+
 #include "freertos/FreeRTOS.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
@@ -9,3 +13,5 @@
 
 void tof_init();
 void tof_read();
+
+#endif // TOF_H

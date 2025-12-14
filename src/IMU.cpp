@@ -332,15 +332,17 @@ void IMU::print_imu() {
             ACCEL_BIT | GYRO_BIT | MAG_BIT,
             pdTRUE, pdTRUE, portMAX_DELAY);
         xSemaphoreTake(shared_imu_data_mutex, portMAX_DELAY);
-        printf("Accel: X=%f Y=%f Z=%f | Gyro: X=%f Y=%f Z=%f | Mag: X=%f Y=%f Z=%f\n",
+        // printf("Accel: X=%f Y=%f Z=%f | Gyro: X=%f Y=%f Z=%f | Mag: X=%f Y=%f Z=%f\n",
+        //     IMU::shared_imu_data.converted_imu_readings.accel.x, IMU::shared_imu_data.converted_imu_readings.accel.y, IMU::shared_imu_data.converted_imu_readings.accel.z,
+        //     IMU::shared_imu_data.converted_imu_readings.gyro.x, IMU::shared_imu_data.converted_imu_readings.gyro.y, IMU::shared_imu_data.converted_imu_readings.gyro.z,
+        //     IMU::shared_imu_data.converted_imu_readings.mag.x, IMU::shared_imu_data.converted_imu_readings.mag.y, IMU::shared_imu_data.converted_imu_readings.mag.z);
+        
+        
+        // csv style logging:
+        printf("%f,%f,%f,%f,%f,%f,%f,%f,%f\n",
             IMU::shared_imu_data.converted_imu_readings.accel.x, IMU::shared_imu_data.converted_imu_readings.accel.y, IMU::shared_imu_data.converted_imu_readings.accel.z,
             IMU::shared_imu_data.converted_imu_readings.gyro.x, IMU::shared_imu_data.converted_imu_readings.gyro.y, IMU::shared_imu_data.converted_imu_readings.gyro.z,
             IMU::shared_imu_data.converted_imu_readings.mag.x, IMU::shared_imu_data.converted_imu_readings.mag.y, IMU::shared_imu_data.converted_imu_readings.mag.z);
-        // printf("Accel: X=%d Y=%d Z=%d | Gyro: X=%d Y=%d Z=%d | Mag: X=%d Y=%d Z=%d\n",
-        //     IMU::shared_imu_data.raw_imu_readings.accel.x, IMU::shared_imu_data.raw_imu_readings.accel.y, IMU::shared_imu_data.raw_imu_readings.accel.z,
-        //     IMU::shared_imu_data.raw_imu_readings.gyro.x, IMU::shared_imu_data.raw_imu_readings.gyro.y, IMU::shared_imu_data.raw_imu_readings.gyro.z,
-        //     IMU::shared_imu_data.raw_imu_readings.mag.x, IMU::shared_imu_data.raw_imu_readings.mag.y, IMU::shared_imu_data.raw_imu_readings.mag.z); 
-        
         //TODO: batch data logging
             // xQueueSend(IMU::batch_data_queue, &IMU::shared_imu_data.converted_imu_readings, 0);
         xSemaphoreGive(shared_imu_data_mutex);

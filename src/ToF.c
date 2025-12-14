@@ -1,5 +1,5 @@
 #include "ToF.h"
-
+//! DEPRECATED - for reference only
 void tof_init(){
     // Initialize GPIO pins for ToF sensor I2C communication
     esp_rom_gpio_pad_select_gpio(I2C_SDA);
