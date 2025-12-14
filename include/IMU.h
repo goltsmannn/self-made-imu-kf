@@ -19,6 +19,8 @@
 #define GYRO_BIT  (1 << 1)
 #define MAG_BIT   (1 << 2)
 
+#define BATCH_SIZE 10
+
 #define ACCEL_GYRO_INTERRUPT_PIN (GPIO_NUM_16)
 #define MAG_INTERRUPT_PIN (GPIO_NUM_17)
 
@@ -82,10 +84,14 @@ public:
     static converted_sensor_data calibrated_gyro_offset;
 
     static QueueHandle_t sensor_data_queue;
+    static QueueHandle_t batch_data_queue;
+    
     static EventGroupHandle_t print_ready_event_group;
     static SemaphoreHandle_t shared_imu_data_mutex;
     static SemaphoreHandle_t accelGyroDRDYSemaphore;
     static SemaphoreHandle_t magDRDYSemaphore;
+    static SemaphoreHandle_t batchReadySemaphore;
+
     static bool multi_read_enabled;
 
 

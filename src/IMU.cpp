@@ -3,17 +3,21 @@
 // Static member definitions and initializations
 imu_data_t IMU::shared_imu_data = {};
 converted_sensor_data IMU::calibrated_gyro_offset = {};
+
+
+QueueHandle_t IMU::batch_data_queue = xQueueCreate(BATCH_SIZE, sizeof(converted_imu_data));
 QueueHandle_t IMU::sensor_data_queue = xQueueCreate(10, sizeof(SensorQueueEntity));
 EventGroupHandle_t IMU::print_ready_event_group = xEventGroupCreate();
 SemaphoreHandle_t IMU::shared_imu_data_mutex = xSemaphoreCreateMutex();
 SemaphoreHandle_t IMU::accelGyroDRDYSemaphore = xSemaphoreCreateBinary();
 SemaphoreHandle_t IMU::magDRDYSemaphore = xSemaphoreCreateBinary();
+SemaphoreHandle_t IMU::batchReadySemaphore = xSemaphoreCreateBinary();
 bool IMU::multi_read_enabled = false;
 
 const uint8_t accel_setup_commands[8] = {
     CTRL_REG5_XL, 0b00111000, // enable axis
     CTRL_REG6_XL, 0b01000000, // 50HZ ODR, +-2g, 
-    CTRL_REG7_XL, 0b11000100, // ODR/9 BW, High-res mode, use LPF, bypass HPF
+    CTRL_REG7_XL, 0b11000000, // high res mode and disable filters.
     CTRL_REG9, 0b00001000 // enable active high data ready signal for both accel and gyro
 
     // CTRL_REG7_XL, 0b01000000 // ODR/9 BW, High-res mode, use LPF, bypass HPF
@@ -323,7 +327,6 @@ void IMU::toggle_multi_read() {
 
 void IMU::print_imu() {
     
-
     while (1) {
         xEventGroupWaitBits(print_ready_event_group,
             ACCEL_BIT | GYRO_BIT | MAG_BIT,
@@ -333,10 +336,19 @@ void IMU::print_imu() {
             IMU::shared_imu_data.converted_imu_readings.accel.x, IMU::shared_imu_data.converted_imu_readings.accel.y, IMU::shared_imu_data.converted_imu_readings.accel.z,
             IMU::shared_imu_data.converted_imu_readings.gyro.x, IMU::shared_imu_data.converted_imu_readings.gyro.y, IMU::shared_imu_data.converted_imu_readings.gyro.z,
             IMU::shared_imu_data.converted_imu_readings.mag.x, IMU::shared_imu_data.converted_imu_readings.mag.y, IMU::shared_imu_data.converted_imu_readings.mag.z);
+        // printf("Accel: X=%d Y=%d Z=%d | Gyro: X=%d Y=%d Z=%d | Mag: X=%d Y=%d Z=%d\n",
+        //     IMU::shared_imu_data.raw_imu_readings.accel.x, IMU::shared_imu_data.raw_imu_readings.accel.y, IMU::shared_imu_data.raw_imu_readings.accel.z,
+        //     IMU::shared_imu_data.raw_imu_readings.gyro.x, IMU::shared_imu_data.raw_imu_readings.gyro.y, IMU::shared_imu_data.raw_imu_readings.gyro.z,
+        //     IMU::shared_imu_data.raw_imu_readings.mag.x, IMU::shared_imu_data.raw_imu_readings.mag.y, IMU::shared_imu_data.raw_imu_readings.mag.z); 
+        
+        //TODO: batch data logging
+            // xQueueSend(IMU::batch_data_queue, &IMU::shared_imu_data.converted_imu_readings, 0);
         xSemaphoreGive(shared_imu_data_mutex);
+
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
+
 
 void IMU::calibrate_gyroscope() {
     constexpr int num_samples = 100;
